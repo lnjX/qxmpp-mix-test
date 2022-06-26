@@ -11,6 +11,7 @@
 #include <QFutureWatcher>
 #include <QXmppMixIq.h>
 #include <QXmppDiscoveryIq.h>
+#include <QXmppRosterManager.h>
 #include <QXmppDiscoveryManager.h>
 
 namespace ranges = std::ranges;
@@ -33,42 +34,84 @@ void await(const QFuture<T> &future, QObject *context, Handler handler)
 int main(int argc, char **argv)
 {
     QCoreApplication app(argc, argv);
-    
     auto client = new QXmppClient(&app);
-    client->logger()->setLoggingType(QXmppLogger::StdoutLogging);
+
+    enum Action { None, Join, Leave, Create, Destroy } action = None;
+    auto actionString = std::string_view(argv[1]);
+    if (actionString == "join") {
+        action = Join;
+    } else if (actionString == "leave") {
+        action = Leave;
+    } else if (actionString == "create") {
+        action = Create;
+    } else if (actionString == "destroy") {
+        action = Destroy;
+    }
 
     QXmppConfiguration config;
     config.setJid("lnj@deimos");
     config.setHost("localhost");
     config.setPassword("12345");
+    config.setResource(QString::number(QDateTime::currentDateTimeUtc().currentSecsSinceEpoch(), 36));
     config.setPort(5222);
     config.setIgnoreSslErrors(true);
     client->connectToServer(config);
 
-    QObject::connect(client, &QXmppClient::connected, [client] {
+    QObject::connect(client, &QXmppClient::connected, [client, action] {
+        qDebug() << "Connected!";
+        qDebug() << action;
+        client->logger()->setLoggingType(QXmppLogger::StdoutLogging);
+
         QXmppMixIq iq;
-        iq.setActionType(QXmppMixIq::Create);
-        iq.setChannelName("kekse2");
-        iq.setTo("mix.deimos");
-        iq.setType(QXmppIq::Set);
+        iq.setId("mix-req-1");
+        auto channelName = QStringLiteral("kekse2");
+        switch (action) {
+        case Join:
+            iq.setActionType(QXmppMixIq::ClientJoin);
+            iq.setJid(channelName + "@mix.deimos");
+            iq.setTo("lnj@deimos");
+            iq.setType(QXmppIq::Set);
+            iq.setNodes({ "urn:xmpp:mix:messages" });
+            break;
+        case Leave:
+            iq.setActionType(QXmppMixIq::ClientLeave);
+            iq.setJid(channelName + "@mix.deimos");
+            iq.setTo("lnj@deimos");
+            iq.setType(QXmppIq::Set);
+            break;
+        case Create:
+            iq.setActionType(QXmppMixIq::Create);
+            iq.setChannelName(channelName);
+            iq.setTo("mix.deimos");
+            iq.setType(QXmppIq::Set);
+            break;
+        case Destroy:
+            iq.setActionType(QXmppMixIq::Destroy);
+            iq.setChannelName(channelName);
+            iq.setTo("mix.deimos");
+            iq.setType(QXmppIq::Set);
+            break;
+        }
+        auto future = client->sendGenericIq(std::move(iq));
 
-//        await(client->sendGenericIq(std::move(iq)), client, [](QXmppClient::EmptyResult result) {
-//            if (const auto err = std::get_if<QXmppStanza::Error>(&result)) {
-//                qDebug() << "ERROR!!!!!!!" << err->text();
-//                return;
-//            }
-//            qDebug() << "Created!!";
-//        });
-        
-        QXmppMixIq join;
-        join.setActionType(QXmppMixIq::ClientJoin);
-        join.setJid("kekse2@mix.deimos");
-        join.setTo("lnj@deimos");
-        join.setType(QXmppIq::Set);
-        join.setNodes({ "urn:xmpp:mix:messages" });
-        client->sendGenericIq(std::move(join));
+        QObject::connect(&client->rosterManager(), &QXmppRosterManager::itemAdded,
+                         [](const QString &bareJid) {
+            qDebug() << '\n' << "Item Added!" << bareJid << '\n';
+        });
+        QObject::connect(&client->rosterManager(), &QXmppRosterManager::itemRemoved,
+                         [](const QString &bareJid) {
+            qDebug() << '\n' << "Item Removed!" << bareJid << '\n';
+        });
+        await(future, client, [client](QXmppClient::EmptyResult result) {
+            if (const auto err = std::get_if<QXmppStanza::Error>(&result)) {
+                qDebug() << "\nError:" << err->text() << '\n';
+                return;
+            }
+            qDebug() << "\nSuccess!\n";
+//             client->disconnectFromServer();
+        });
 
-        auto discoManager = client->findExtension<QXmppDiscoveryManager>();
+//         auto discoManager = client->findExtension<QXmppDiscoveryManager>();
 //        await(discoManager->requestDiscoInfo("mix.deimos"), client, [](auto) {});
     });
 
