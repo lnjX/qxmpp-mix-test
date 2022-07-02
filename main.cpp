@@ -36,7 +36,7 @@ int main(int argc, char **argv)
     QCoreApplication app(argc, argv);
     auto client = new QXmppClient(&app);
 
-    enum Action { None, Join, Leave, Create, Destroy } action = None;
+    enum Action { None, Join, Leave, Create, Destroy, Subscribe } action = None;
     auto actionString = std::string_view(argv[1]);
     if (actionString == "join") {
         action = Join;
@@ -46,6 +46,8 @@ int main(int argc, char **argv)
         action = Create;
     } else if (actionString == "destroy") {
         action = Destroy;
+    } else if (actionString == "subscribe") {
+        action = Subscribe;
     }
 
     QXmppConfiguration config;
@@ -63,33 +65,36 @@ int main(int argc, char **argv)
         client->logger()->setLoggingType(QXmppLogger::StdoutLogging);
 
         QXmppMixIq iq;
+        iq.setType(QXmppIq::Set);
         iq.setId("mix-req-1");
         auto channelName = QStringLiteral("kekse2");
+	auto mixService = QStringLiteral("mix.voyager");
         switch (action) {
         case Join:
             iq.setActionType(QXmppMixIq::ClientJoin);
-            iq.setJid(channelName + "@mix.deimos");
+            iq.setJid(channelName + "@" + mixService);
             iq.setTo("lnj@deimos");
-            iq.setType(QXmppIq::Set);
-            iq.setNodes({ "urn:xmpp:mix:messages" });
+            iq.setNodes({ "urn:xmpp:mix:nodes:messages" });
             break;
         case Leave:
             iq.setActionType(QXmppMixIq::ClientLeave);
-            iq.setJid(channelName + "@mix.deimos");
+            iq.setJid(channelName + "@" + mixService);
             iq.setTo("lnj@deimos");
-            iq.setType(QXmppIq::Set);
             break;
         case Create:
             iq.setActionType(QXmppMixIq::Create);
             iq.setChannelName(channelName);
-            iq.setTo("mix.deimos");
-            iq.setType(QXmppIq::Set);
+            iq.setTo(mixService);
             break;
         case Destroy:
             iq.setActionType(QXmppMixIq::Destroy);
             iq.setChannelName(channelName);
-            iq.setTo("mix.deimos");
-            iq.setType(QXmppIq::Set);
+            iq.setTo(mixService);
+            break;
+        case Subscribe:
+            iq.setActionType(QXmppMixIq::UpdateSubscription);
+            iq.setTo(channelName + "@" + mixService);
+            iq.setNodes({"urn:xmpp:mix:messages"});
             break;
         }
         auto future = client->sendGenericIq(std::move(iq));
